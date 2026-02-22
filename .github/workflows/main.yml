@@ -1,4 +1,4 @@
-name: DEVXRDP â€“ Super Persistent (Save on Cancel)
+name: ARES â€“ Super Persistent (Save on Cancel)
 
 on:
   workflow_dispatch:
@@ -20,20 +20,20 @@ jobs:
       - name: Pre-Create Directories
         run: |
           $sec = ConvertTo-SecureString "Rdp!9Xq#2025" -AsPlainText -Force
-          if (-not (Get-LocalUser -Name "DEVXRDP" -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name "DEVXRDP" -Password $sec -AccountNeverExpires
-            Add-LocalGroupMember Administrators "DEVXRDP"
+          if (-not (Get-LocalUser -Name "ARES" -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name "ARES" -Password $sec -AccountNeverExpires
+            Add-LocalGroupMember Administrators "ARES"
           }
-          New-Item -Path "C:\Users\DEVXRDP\AppData\Local\Google\Chrome\User Data" -ItemType Directory -Force
+          New-Item -Path "C:\Users\ARES\AppData\Local\Google\Chrome\User Data" -ItemType Directory -Force
           New-Item -Path "C:\PersistentData" -ItemType Directory -Force
-          New-Item -Path "C:\Users\DEVXRDP\Downloads" -ItemType Directory -Force
+          New-Item -Path "C:\Users\ARES\Downloads" -ItemType Directory -Force
 
       - name: Restore Session Cache
         uses: actions/cache/restore@v4
         with:
           path: |
-            C:\Users\DEVXRDP\AppData\Local\Google\Chrome\User Data
-            C:\Users\DEVXRDP\Downloads
+            C:\Users\ARES\AppData\Local\Google\Chrome\User Data
+            C:\Users\ARES\Downloads
             C:\PersistentData
           key: rdp-v4-${{ github.run_id }}
           restore-keys: |
@@ -54,7 +54,7 @@ jobs:
         shell: powershell
         run: |
           $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 | Select-Object -First 1
-          Write-Host "IP: $ip | User: DEVXRDP | Pass: Rdp!9Xq#2025"
+          Write-Host "IP: $ip | User: ARES | Pass: Rdp!9Xq#2025"
           
           # Timer loop (taaki cancel hone par ye step break ho jaye)
           try {
@@ -69,7 +69,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            C:\Users\DEVXRDP\AppData\Local\Google\Chrome\User Data
-            C:\Users\DEVXRDP\Downloads
+            C:\Users\ARES\AppData\Local\Google\Chrome\User Data
+            C:\Users\ARES\Downloads
             C:\PersistentData
           key: rdp-v4-${{ github.run_id }}-${{ github.run_attempt }}
