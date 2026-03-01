@@ -1,78 +1,103 @@
-name: Ares Persistent RDP (Fixed)
+name: Ares Persistent RDP – Ultimate V4
+
 on:
   workflow_dispatch:
     inputs:
       ts_authkey:
-        description: 'Enter VALID Tailscale Auth Key'
+        description: "Tailscale Auth Key"
         required: true
         type: string
   schedule:
-    - cron: '0 */5 * * *' # Restarts every 5 hours for persistence
+    - cron: '0 */5 * * *' # Auto-restart every 5 hours for 24/7 feel
 
 jobs:
-  setup-ares-rdp:
+  ares-rdp:
     runs-on: windows-latest
+    timeout-minutes: 350 # Maximize Azure/GitHub runner time
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Ares Custom Branding
+      - name: Ares Branding & User Setup
         shell: powershell
         run: |
           Write-Host "--- APPLYING ARES BRANDING ---" -ForegroundColor Cyan
-          $ComputerName = "Ares-Cloud-PC"
-          Rename-Computer -NewName $ComputerName -Force -ErrorAction SilentlyContinue
-          powercfg /x -hibernate-timeout-ac 0
-          powercfg /x -standby-timeout-ac 0
+          # Fix: Using high-complexity password to avoid InvalidPasswordException
+          $sec = ConvertTo-SecureString "Ares_Cloud_Admin!99#X" -AsPlainText -Force
+          if (-not (Get-LocalUser -Name "Ares" -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name "Ares" -Password $sec -AccountNeverExpires -Description "Ares Custom RDP Admin"
+            Add-LocalGroupMember Administrators "Ares"
+          }
+          # Create folders for persistence
+          New-Item -Path "C:\Users\Ares\AppData\Local\Google\Chrome\User Data" -ItemType Directory -Force
+          New-Item -Path "C:\Ares_Persistent" -ItemType Directory -Force
+          New-Item -Path "C:\Users\Ares\Downloads" -ItemType Directory -Force
+          
+          # Machine Branding
+          Rename-Computer -NewName "Ares-Cloud-PC" -Force -ErrorAction SilentlyContinue
 
-      - name: Pre-install Google Chrome
+      - name: Restore Ares Session Data
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\Users\Ares\AppData\Local\Google\Chrome\User Data
+            C:\Users\Ares\Downloads
+            C:\Ares_Persistent
+          key: ares-v4-${{ github.run_id }}
+          restore-keys: |
+            ares-v4-
+
+      - name: Install Chrome & Tools
         shell: powershell
         run: |
-          Write-Host "Installing Chrome for Ares..." -ForegroundColor Cyan
+          Write-Host "Installing Chrome..." -ForegroundColor Cyan
           $Path = "$env:TEMP\chrome_installer.exe"
           Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/375.126/chrome_installer.exe" -OutFile $Path
           Start-Process -FilePath $Path -ArgumentList "/silent", "/install" -Wait
-          Remove-Item $Path
-          Write-Host "Chrome Installed Successfully." -ForegroundColor Green
+          Write-Host "Chrome Installed." -ForegroundColor Green
 
-      - name: Setup Tailscale Connectivity
+      - name: Start Tailscale
         shell: powershell
         run: |
-          Write-Host "Connecting to Tailscale Network..." -ForegroundColor Cyan
-          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "ts.exe"
-          Start-Process -FilePath "ts.exe" -ArgumentList "/quiet", "/norestart" -Wait
-          
-          # Fix: Using the specific input key to avoid "Invalid Key" errors
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "$env:TEMP\tailscale.exe"
+          Start-Process "$env:TEMP\tailscale.exe" -ArgumentList "/quiet","/norestart" -Wait
+          # Trimming input to avoid "Invalid Key" error
           $Key = "${{ github.event.inputs.ts_authkey }}".Trim()
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$Key --hostname="Ares-RDP"
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey "$Key" --hostname "Ares-RDP" --accept-dns=false
 
-      - name: Configure RDP & Ares User
+      - name: Enable RDP Access
         shell: powershell
         run: |
-          Write-Host "Configuring Remote Desktop Access..." -ForegroundColor Cyan
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 1
+
+      - name: Keep-Alive & Active Session
+        shell: powershell
+        run: |
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 | Select-Object -First 1
+          Write-Host "====================================" -ForegroundColor Cyan
+          Write-Host "       ARES RDP IS ONLINE           " -ForegroundColor White -BackgroundColor Blue
+          Write-Host "====================================" -ForegroundColor Cyan
+          Write-Host " IP: $ip" -ForegroundColor Yellow
+          Write-Host " USER: Ares" -ForegroundColor Green
+          Write-Host " PASS: Ares_Cloud_Admin!99#X" -ForegroundColor Green
+          Write-Host "====================================" -ForegroundColor Cyan
           
-          # Fix: Using a complex password to resolve InvalidPasswordException
-          $Password = ConvertTo-SecureString "Ares_Cloud_Admin!99" -AsPlainText -Force
-          
-          if (!(Get-LocalUser -Name "Ares" -ErrorAction SilentlyContinue)) {
-              New-LocalUser "Ares" -Password $Password -Description "Ares Custom RDP Admin"
-              Add-LocalGroupMember -Group "Administrators" -Member "Ares"
-              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Ares"
-              Write-Host "User 'Ares' created successfully." -ForegroundColor Green
+          try {
+            Start-Sleep -Seconds 18000 # 5 Hours
+          } finally {
+            Write-Host "Session rotation starting... saving persistent data."
           }
 
-      - name: Persistent Keep-Alive Loop
-        shell: powershell
-        run: |
-          $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-          Write-Host "====================================" -ForegroundColor Cyan
-          Write-Host "       ARES RDP IS NOW ONLINE       " -ForegroundColor White -BackgroundColor Blue
-          Write-Host "====================================" -ForegroundColor Cyan
-          Write-Host " TAILSCALE IP: $ip" -ForegroundColor Yellow
-          Write-Host " USERNAME:     Ares" -ForegroundColor Green
-          Write-Host " NEW PASSWORD: Ares_Cloud_Admin!99" -ForegroundColor Green
-          Write-Host "====================================" -ForegroundColor Cyan
-          Start-Sleep -Seconds 18000
+      - name: Save Persistent Data Always
+        if: always() # This ensures data saves even if the job is cancelled or timed out
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\Users\Ares\AppData\Local\Google\Chrome\User Data
+            C:\Users\Ares\Downloads
+            C:\Ares_Persistent
+          key: ares-v4-${{ github.run_id }}-${{ github.run_attempt }}
+
