@@ -3,11 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       ts_authkey:
-        description: 'Enter your Tailscale Auth Key'
+        description: 'Enter VALID Tailscale Auth Key'
         required: true
         type: string
   schedule:
-    - cron: '0 */5 * * *' # Restarts every 5 hours to stay "Persistent" & GitHub Safe
+    - cron: '0 */5 * * *' # Restarts every 5 hours for persistence
 
 jobs:
   setup-ares-rdp:
@@ -22,7 +22,6 @@ jobs:
           Write-Host "--- APPLYING ARES BRANDING ---" -ForegroundColor Cyan
           $ComputerName = "Ares-Cloud-PC"
           Rename-Computer -NewName $ComputerName -Force -ErrorAction SilentlyContinue
-          # Keep the VM awake
           powercfg /x -hibernate-timeout-ac 0
           powercfg /x -standby-timeout-ac 0
 
@@ -43,32 +42,26 @@ jobs:
           Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "ts.exe"
           Start-Process -FilePath "ts.exe" -ArgumentList "/quiet", "/norestart" -Wait
           
-          # Use Input Box key, or fallback to Secret
-          $Key = "${{ github.event.inputs.ts_authkey }}"
-          if (-not $Key) { $Key = "${{ secrets.TS_AUTHKEY }}" }
-          
+          # Fix: Using the specific input key to avoid "Invalid Key" errors
+          $Key = "${{ github.event.inputs.ts_authkey }}".Trim()
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$Key --hostname="Ares-RDP"
 
       - name: Configure RDP & Ares User
         shell: powershell
         run: |
           Write-Host "Configuring Remote Desktop Access..." -ForegroundColor Cyan
-          # Enable RDP and NLA
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
           
-          # FIXED PASSWORD: Meets Windows complexity requirements
-          $Password = ConvertTo-SecureString "Ares_Admin_99!#Secure" -AsPlainText -Force
+          # Fix: Using a complex password to resolve InvalidPasswordException
+          $Password = ConvertTo-SecureString "Ares_Cloud_Admin!99" -AsPlainText -Force
           
-          # FIXED USER CREATION: Checks if 'Ares' exists to prevent crash
           if (!(Get-LocalUser -Name "Ares" -ErrorAction SilentlyContinue)) {
               New-LocalUser "Ares" -Password $Password -Description "Ares Custom RDP Admin"
               Add-LocalGroupMember -Group "Administrators" -Member "Ares"
               Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Ares"
               Write-Host "User 'Ares' created successfully." -ForegroundColor Green
-          } else {
-              Write-Host "User 'Ares' already exists, updating configuration." -ForegroundColor Yellow
           }
 
       - name: Persistent Keep-Alive Loop
@@ -80,10 +73,6 @@ jobs:
           Write-Host "====================================" -ForegroundColor Cyan
           Write-Host " TAILSCALE IP: $ip" -ForegroundColor Yellow
           Write-Host " USERNAME:     Ares" -ForegroundColor Green
-          Write-Host " PASSWORD:     Ares_Admin_99!#Secure" -ForegroundColor Green
-          Write-Host " STATUS:       GitHub Safe (5hr Cycle)" -ForegroundColor Magenta
+          Write-Host " NEW PASSWORD: Ares_Cloud_Admin!99" -ForegroundColor Green
           Write-Host "====================================" -ForegroundColor Cyan
-          
-          # Runs for 5 hours (18000 seconds)
           Start-Sleep -Seconds 18000
-          
