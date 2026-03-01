@@ -1,0 +1,78 @@
+name: Ares Persistent RDP (Input Auth)
+on:
+  workflow_dispatch:
+    inputs:
+      ts_authkey:
+        description: 'Enter your Tailscale Auth Key'
+        required: true
+        type: string
+  schedule:
+    - cron: '0 */5 * * *' # Restarts every 5 hours for persistence
+
+jobs:
+  setup-ares-rdp:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Ares Custom Branding
+        shell: powershell
+        run: |
+          Write-Host "--- APPLYING ARES BRANDING ---" -ForegroundColor Cyan
+          $ComputerName = "Ares-Cloud-PC"
+          Rename-Computer -NewName $ComputerName -Force -ErrorAction SilentlyContinue
+          powercfg /x -hibernate-timeout-ac 0
+          powercfg /x -standby-timeout-ac 0
+
+      - name: Pre-install Google Chrome
+        shell: powershell
+        run: |
+          Write-Host "Installing Chrome for Ares..." -ForegroundColor Cyan
+          $Path = "$env:TEMP\chrome_installer.exe"
+          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/375.126/chrome_installer.exe" -OutFile $Path
+          Start-Process -FilePath $Path -ArgumentList "/silent", "/install" -Wait
+          Remove-Item $Path
+          Write-Host "Chrome Installed Successfully." -ForegroundColor Green
+
+      - name: Setup Tailscale Connectivity
+        shell: powershell
+        run: |
+          Write-Host "Connecting to Tailscale Network..." -ForegroundColor Cyan
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "ts.exe"
+          Start-Process -FilePath "ts.exe" -ArgumentList "/quiet", "/norestart" -Wait
+          # Priority: Uses Input Box key first, falls back to GitHub Secrets TS_AUTHKEY if empty
+          $Key = "${{ github.event.inputs.ts_authkey }}"
+          if (-not $Key) { $Key = "${{ secrets.TS_AUTHKEY }}" }
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$Key --hostname="Ares-RDP"
+
+      - name: Configure RDP & Ares User
+        shell: powershell
+        run: |
+          Write-Host "Configuring Remote Desktop Access..." -ForegroundColor Cyan
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+          
+          # Creating Ares Administrator Account
+          $Password = ConvertTo-SecureString "AresAdmin123!" -AsPlainText -Force
+          New-LocalUser "Ares" -Password $Password -Description "Ares Custom RDP Admin"
+          Add-LocalGroupMember -Group "Administrators" -Member "Ares"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Ares"
+          Write-Host "User 'Ares' is ready." -ForegroundColor Green
+
+      - name: Persistent Keep-Alive Loop
+        shell: powershell
+        run: |
+          $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          Write-Host "====================================" -ForegroundColor Cyan
+          Write-Host "       ARES RDP IS NOW ONLINE       " -ForegroundColor White -BackgroundColor Blue
+          Write-Host "====================================" -ForegroundColor Cyan
+          Write-Host " TAILSCALE IP: $ip" -ForegroundColor Yellow
+          Write-Host " USERNAME:     Ares" -ForegroundColor Green
+          Write-Host " PASSWORD:     AresAdmin123!" -ForegroundColor Green
+          Write-Host "====================================" -ForegroundColor Cyan
+          
+          # Runs for 5 hours to stay within GitHub Safe limits
+          Start-Sleep -Seconds 18000
+
